@@ -1,0 +1,113 @@
+# =========================================================
+# PROMTAIL — Configuration générale
+# =========================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # =======================================================
+  # JOB 1 — Logs Syslog des FortiGate (ancien flux 5514)
+  # =======================================================
+  - job_name: fortigate_syslog
+    syslog:
+      listen_address: 0.0.0.0:5514
+      listen_protocol: tcp
+      labels:
+        source: fortigate
+    relabel_configs:
+      - source_labels: ['__syslog_message_hostname']
+        target_label: device
+      - source_labels: ['__syslog_message_severity']
+        target_label: severity
+
+  # =======================================================
+  # JOB 1bis — Logs FortiGate (via syslog-ng → fichiers texte)
+  # =======================================================
+  - job_name: fortigate_syslog_files
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: fortigate
+          source: syslogng
+          __path__: /var/log/fortigate/*.log
+
+    pipeline_stages:
+      # 1) Enlève le timestamp ISO en début de ligne et garde le reste (logfmt)
+      - regex:
+          expression: '^[^ ]+\s+(?P<kv>.*)$'
+
+      # 2) Parse le "reste" en logfmt (FortiGate key=value avec guillemets)
+      - logfmt:
+          source: kv
+          mapping:
+            type: type
+            subtype: subtype
+            level: level
+            action: action
+            policyid: policyid
+            srcintf: srcintf
+            dstintf: dstintf
+            service: service
+            # champs utiles à garder dans le contenu (pas en labels)
+            srcip: srcip
+            dstip: dstip
+            user: user
+            msg: msg
+
+      # 3) Labels SOC-safe (cardinalité OK)
+      - labels:
+          type:
+          subtype:
+          level:
+          action:
+          policyid:
+          srcintf:
+          dstintf:
+          service:
+
+  # =======================================================
+  # JOB 2 — Logs Microsoft Entra ID (fichiers JSON)
+  # =======================================================
+  - job_name: entra_id_files
+
+    pipeline_stages:
+      - json:
+          expressions:
+            lbl_source: labels.source
+            lbl_type: labels.type
+            user: event.userPrincipalName
+            app: event.appDisplayName
+            errorCode: event.status.errorCode
+            country: event.location.countryOrRegion
+
+      - labels:
+          source:
+          type:
+
+      - regex:
+          expression: '.*/(?P<fn>[^/]+)\.jsonl$'
+          source: filename
+
+      - template:
+          source: category
+          template: '{{ if eq .fn "entra_signins" }}signins_file{{ else if eq .fn "entra_directory_audits" }}directory_audits_file{{ else }}other{{ end }}'
+
+      - labels:
+          category:
+
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          source: entra_id
+          __path__: /logs/*.jsonl

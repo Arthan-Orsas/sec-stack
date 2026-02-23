@@ -1,0 +1,218 @@
+###############################################################################
+# docker-compose.yml
+#
+# Objectif (décrit à la 3e personne, neutre et professionnel) :
+# Ce fichier orchestre une stack de centralisation et d’observabilité des logs
+# autour de Loki/Grafana, avec collecte via Promtail, ingestion Syslog FortiGate
+# via syslog-ng, et collecte Microsoft Entra ID via un collector Python.
+#
+# Composants :
+# - Loki              : stockage + indexation des logs (backend)
+# - Grafana           : visualisation + alerting (frontend)
+# - syslog-ng         : réception Syslog UDP 514 (FortiGate) → écriture fichiers
+# - Promtail          : lecture des fichiers de logs → push vers Loki
+# - entra-collector   : récupération logs Entra ID (Graph API) → fichiers JSONL
+#
+# Sécurité et bonnes pratiques :
+# - Les secrets (Mailjet, Entra ID) ne sont pas commités : ils proviennent de .env
+# - Les volumes nommés sont utilisés pour la persistance (Loki/Grafana)
+# - Les répertoires locaux ./entra/logs, ./entra/state, ./promtail-positions
+#   sont des données d’exécution ; ils doivent être ignorés par Git.
+###############################################################################
+
+version: "3.8"
+
+services:
+
+  ###########################################################################
+  # Loki : stockage des logs
+  ###########################################################################
+  loki:
+    # Image officielle Grafana Loki (version pinée pour stabilité).
+    image: grafana/loki:3.1.0
+
+    # Nom explicite du conteneur (lisible dans Synology Container Manager).
+    container_name: loki
+
+    # Démarrage avec un fichier de configuration monté depuis l’hôte.
+    command: -config.file=/etc/loki/loki.yml
+
+    volumes:
+      # Fichier de configuration Loki (lecture seule).
+      - ./loki.yml:/etc/loki/loki.yml:ro
+
+      # Données Loki persistantes (index/chunks).
+      - loki-data:/loki
+
+    ports:
+      # Port HTTP Loki (endpoint push / query).
+      # Recommandation : exposer uniquement sur le LAN si possible.
+      - "3100:3100"
+
+
+  ###########################################################################
+  # Grafana : visualisation + alerting
+  ###########################################################################
+  grafana:
+    # Image officielle Grafana (version pinée pour éviter les surprises).
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+
+    # Injection de toutes les variables du fichier .env dans le conteneur.
+    # Objectif : permettre l’usage de secrets (Mailjet) sans les écrire en clair.
+    env_file:
+      - .env
+
+    ports:
+      # Accès UI Grafana : http://IP_DU_NAS:3000
+      - "3000:3000"
+
+    volumes:
+      # Données Grafana persistantes : dashboards, users, alert rules, etc.
+      - grafana-data:/var/lib/grafana
+
+    environment:
+      # --- Réglages HTTP Grafana ---
+      - GF_SERVER_HTTP_ADDR=0.0.0.0
+      - GF_SERVER_HTTP_PORT=3000
+
+      # URL “officielle” utilisée par Grafana (liens UI + alerting).
+      # Note : si l’IP change, cette valeur doit être mise à jour.
+      - GF_SERVER_ROOT_URL=http://192.168.75.125:3000
+
+      # Désactive l’inscription libre (durcissement basique).
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+      # --- SMTP (Mailjet) pour notifications / alerting ---
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=in-v3.mailjet.com:587
+
+      # Identifiants SMTP (chargés depuis .env, non stockés dans Git).
+      - GF_SMTP_USER=${MAILJET_API_KEY}
+      - GF_SMTP_PASSWORD=${MAILJET_SECRET_KEY}
+
+      # Expéditeur des emails.
+      - GF_SMTP_FROM_NAME=Grafana
+      - GF_SMTP_FROM_ADDRESS=NOREPLY@mailjet.com
+
+      # Politique TLS pour SMTP.
+      - GF_SMTP_STARTTLS_POLICY=MandatoryStartTLS
+      - GF_SMTP_SKIP_VERIFY=false
+
+    depends_on:
+      # Démarre Grafana après Loki afin de réduire les erreurs au boot.
+      - loki
+
+
+  ###########################################################################
+  # syslog-ng : réception Syslog FortiGate en UDP/514 → fichiers
+  ###########################################################################
+  syslogng:
+    # Image syslog-ng. "latest" est pratique mais peut introduire des changements.
+    # Recommandation : pinner une version si la stack doit être stable.
+    image: balabit/syslog-ng:latest
+    container_name: syslogng
+
+    # Redémarrage automatique (NAS / crash).
+    restart: unless-stopped
+
+    ports:
+      # Port Syslog standard (FortiGate → NAS:514/udp).
+      # Important : désactiver l’écoute Syslog DSM si elle occupe déjà ce port.
+      - "514:514/udp"
+
+    volumes:
+      # Configuration syslog-ng (lecture seule).
+      - ./syslogng/syslog-ng.conf:/etc/syslog-ng/syslog-ng.conf:ro
+
+      # Répertoire où syslog-ng écrit les fichiers de logs FortiGate.
+      - ./syslogng/fortigate:/var/log/fortigate
+
+
+  ###########################################################################
+  # Promtail : collecte des logs (fichiers) → Loki
+  ###########################################################################
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: promtail
+
+    # Démarrage avec fichier de configuration monté depuis l’hôte.
+    command: -config.file=/etc/promtail/promtail.yml
+
+    volumes:
+      # Configuration Promtail (lecture seule).
+      - ./promtail.yml:/etc/promtail/promtail.yml:ro
+
+      # Logs Entra ID (écrits par entra-collector) (lecture seule).
+      - ./entra/logs:/logs:ro
+
+      # Logs FortiGate (écrits par syslog-ng) (lecture seule).
+      - ./syslogng/fortigate:/var/log/fortigate:ro
+
+      # Fichier/dossier de positions (obligatoire) : checkpoint de lecture.
+      # Doit être en lecture/écriture pour éviter la relecture permanente.
+      - ./promtail-positions:/positions
+
+    ports:
+      # Ports Syslog exposés par Promtail (si utilisé par la conf promtail.yml).
+      # Note : dans cette stack, FortiGate envoie déjà à syslog-ng en UDP/514.
+      # Ces ports peuvent être conservés uniquement si Promtail reçoit aussi du syslog.
+      - "5514:5514/tcp"
+      - "5514:5514/udp"
+
+    depends_on:
+      # Promtail doit démarrer après Loki pour envoyer les logs sans erreur.
+      - loki
+
+
+  ###########################################################################
+  # Entra ID Collector : collecte Entra (Graph API) → fichiers JSONL
+  ###########################################################################
+  entra-collector:
+    # Construit l’image à partir du Dockerfile dans ./entra
+    build: ./entra
+    container_name: entra-collector
+
+    # Injection des secrets Entra ID depuis .env (TENANT_ID / CLIENT_ID / CLIENT_SECRET).
+    # Le script Python lit ces valeurs via os.environ["..."].
+    env_file:
+      - .env
+
+    environment:
+      # Paramètres fonctionnels du collector (non sensibles).
+      - POLL_SECONDS=150
+      - LOOKBACK_MINUTES=10
+      - LOG_DIR=/logs
+      - STATE_DIR=/state
+
+      # Paramètres anti-throttling / rétention.
+      - DIRECTORY_AUDITS_TOP=50
+      - RETENTION_DAYS=90
+
+      # Améliore la visibilité des logs applicatifs dans "docker logs".
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      # Sortie logs JSONL (Promtail les lit ensuite).
+      - ./entra/logs:/logs
+
+      # État persistant (checkpoint + SQLite déduplication).
+      - ./entra/state:/state
+
+    restart: unless-stopped
+
+    # Dépendances : Loki n’est pas strictement requis par le collector,
+    # mais la dépendance peut être conservée pour démarrer la stack dans un ordre stable.
+    depends_on:
+      - loki
+
+
+###############################################################################
+# Volumes persistants
+###############################################################################
+volumes:
+  # Données Loki (index/chunks).
+  loki-data:
+
+  # Données Grafana (config interne, dashboards, base, etc.).
+  grafana-data:

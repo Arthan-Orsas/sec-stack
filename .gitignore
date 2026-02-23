@@ -1,0 +1,16 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Données runtime (ne pas versionner)
+entra/logs/
+entra/state/
+promtail-positions/
+syslogng/fortigate/
+
+# Logs divers
+*.log
+
+# Fichiers parasites (accidents de copier/coller)
+e.ymlgit*

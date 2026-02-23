@@ -1,0 +1,101 @@
+# =========================
+# Configuration générale
+# =========================
+
+# Désactive toute authentification interne à Loki.
+# OK dans un réseau interne sécurisé (LAN / MPLS / VPN).
+# À NE PAS exposer directement sur Internet sans reverse proxy / auth.
+auth_enabled: false
+
+
+# =========================
+# Configuration du serveur Loki
+# =========================
+
+server:
+  # Port HTTP sur lequel Loki écoute.
+  # Utilisé par Grafana et Promtail pour envoyer/requêter des logs.
+  http_listen_port: 3100
+
+
+# =========================
+# Configuration commune (stockage, cluster, chemins)
+# =========================
+
+common:
+  # Répertoire racine utilisé par Loki à l'intérieur du conteneur.
+  # Tous les fichiers (chunks, index, règles) seront stockés sous ce chemin.
+  path_prefix: /loki
+
+  storage:
+    # Type de stockage utilisé pour les logs.
+    # "filesystem" = stockage local sur disque.
+    # Adapté pour un SOC light, un NAS ou une VM unique.
+    filesystem:
+      # Répertoire où Loki stocke les "chunks" :
+      # ce sont les blocs de logs compressés.
+      chunks_directory: /loki/chunks
+
+      # Répertoire où Loki stocke les règles (alerting, recording rules).
+      # Même si tu n’as pas encore d’alertes, ce dossier est requis.
+      rules_directory: /loki/rules
+
+  # Nombre de copies des données.
+  # 1 = une seule instance Loki (mode standalone).
+  # Normal pour un NAS ou une VM unique.
+  replication_factor: 1
+
+  ring:
+    kvstore:
+      # Stockage de l’état interne de Loki (anneau).
+      # "inmemory" = tout est gardé en mémoire.
+      # Suffisant pour une instance unique, simple et rapide.
+      store: inmemory
+
+
+# =========================
+# Configuration du schéma de données
+# =========================
+
+schema_config:
+  configs:
+    # Date à partir de laquelle ce schéma est actif.
+    # Important lors des migrations ou évolutions.
+    - from: 2024-01-01
+
+      # Type de stockage utilisé pour l’index.
+      # "tsdb" = moteur moderne, performant, recommandé par Grafana.
+      store: tsdb
+
+      # Type de stockage des objets (logs).
+      # "filesystem" = stockage local.
+      object_store: filesystem
+
+      # Version du schéma Loki.
+      # v13 est la version recommandée actuellement.
+      schema: v13
+
+      index:
+        # Préfixe des fichiers d’index.
+        # Utile si plusieurs index cohabitent.
+        prefix: index_
+
+        # Fréquence de création des index.
+        # 24h = un index par jour.
+        # Bon compromis entre performance et taille.
+        period: 24h
+
+
+# =========================
+# Limites et rétention
+# =========================
+
+limits_config:
+  # Durée maximale de conservation des logs dans Loki.
+  # 720h = 30 jours (30 x 24h).
+  # Au-delà, les logs sont automatiquement supprimés.
+  #
+  # Bonne pratique :
+  # - Loki = supervision active (court terme)
+  # - Archivage long terme = autre stockage
+  retention_period: 720h
