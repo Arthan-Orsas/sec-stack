@@ -97,7 +97,7 @@ scrape_configs:
           type:
 
       - regex:
-          expression: '.*/(?P<fn>[^/]+)\.jsonl$'
+          expression: '.*/(?P<fn>[a-z_]+)_\d{8}\.jsonl$'
           source: filename
 
       - template:
