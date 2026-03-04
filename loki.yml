@@ -16,7 +16,8 @@ server:
   # Port HTTP sur lequel Loki écoute.
   # Utilisé par Grafana et Promtail pour envoyer/requêter des logs.
   http_listen_port: 3100
-
+  http_server_read_timeout: 300s
+  http_server_write_timeout: 300s
 
 # =========================
 # Configuration commune (stockage, cluster, chemins)
