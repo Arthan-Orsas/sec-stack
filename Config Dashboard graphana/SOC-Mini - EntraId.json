@@ -60,7 +60,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 17,
+        "h": 10,
         "w": 12,
         "x": 0,
         "y": 0
@@ -686,7 +686,7 @@
         ]
       },
       "gridPos": {
-        "h": 17,
+        "h": 11,
         "w": 12,
         "x": 12,
         "y": 0
@@ -870,7 +870,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 10
       },
       "id": 3,
       "options": {
@@ -972,7 +972,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 11
       },
       "id": 2,
       "options": {
@@ -1059,6 +1059,7 @@
             }
           },
           "mappings": [],
+          "noValue": "Pas de connection depuis l'étranger",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1101,10 +1102,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 20
       },
       "id": 5,
       "options": {
@@ -1136,6 +1137,112 @@
       "title": "Connexions depuis l'étranger (24h)",
       "transparent": true,
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Analyse des tentatives de connexion Entra ID sur les dernières 24h par tranches de 5 minutes. \nPermet de détecter les anomalies, pics d'échecs ou tentatives d'intrusion.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Connexions échouées"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 6,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time(\r\n  {source=\"entra_id\", filename=~\"/logs/entra_signins.*\"}\r\n  | json\r\n  | event_status_errorCode = \"0\"\r\n  [5m]\r\n))",
+          "legendFormat": "Connexions réussies",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time(\r\n  {source=\"entra_id\", filename=~\"/logs/entra_signins.*\"}\r\n  | json\r\n  | event_status_errorCode != \"0\"\r\n  [5m]\r\n))",
+          "hide": false,
+          "legendFormat": "Connexions échouées",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "Timeline connexions réussies vs échouées (24h)",
+      "type": "state-timeline"
     }
   ],
   "refresh": "",
@@ -1145,13 +1252,13 @@
     "list": []
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-24h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "SOC-Mini - EntraId - YMCA",
   "uid": "bfd0n4n0selfkd",
-  "version": 19,
+  "version": 22,
   "weekStart": "monday"
 }
