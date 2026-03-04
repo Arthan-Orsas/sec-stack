@@ -81,6 +81,8 @@ scrape_configs:
   - job_name: entra_id_files
 
     pipeline_stages:
+      - drop:
+          older_than: 24h
       - json:
           expressions:
             lbl_source: labels.source

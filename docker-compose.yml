@@ -93,7 +93,7 @@ services:
 
       # Expéditeur des emails.
       - GF_SMTP_FROM_NAME=Grafana
-      - GF_SMTP_FROM_ADDRESS=NOREPLY@mailjet.com
+      - GF_SMTP_FROM_ADDRESS=grafana@ymca-services-occitanie.com
 
       # Politique TLS pour SMTP.
       - GF_SMTP_STARTTLS_POLICY=MandatoryStartTLS
