@@ -1,37 +1,24 @@
 """
 soc_report.py — Rapport mensuel SOC-Mini YMCA
 
-Génère un rapport PDF mensuel à partir des données Loki,
-puis l'envoie par email via Mailjet.
-
-Sections :
-- Résumé exécutif
-- Alertes critiques EntraID
-- Consommation IA
-- Activité VPN
-- Top services bloqués FortiGate
-- Connexions étrangères
+STRATÉGIE LOKI :
+- Loki refuse les fenêtres > 24h en mode instant (erreur 400)
+- Les grandes fenêtres en range timeout sur FortiGate
+- Solution : on découpe la période en tranches de 24h et on additionne
+  → loki_query_chunked() fait N appels instant [24h] glissants
+  → léger, fiable, pas de timeout
 
 Variables d'environnement :
-Obligatoires :
-- MAILJET_API_KEY
-- MAILJET_SECRET_KEY
-- REPORT_TO        (email destinataire)
-
-Optionnelles :
-- LOKI_URL         (défaut: http://loki:3100)
-- REPORT_FROM      (défaut: grafana@ymca-services-occitanie.com)
-- REPORT_DIR       (défaut: /reports)
-- LOOKBACK_DAYS    (défaut: 30)
+Obligatoires : MAILJET_API_KEY, MAILJET_SECRET_KEY, REPORT_TO
+Optionnelles : LOKI_URL, REPORT_FROM, REPORT_DIR, LOOKBACK_DAYS
 """
 
 import os
-import json
 import time
 import requests
 import smtplib
-import base64
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -45,7 +32,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     PageBreak, HRFlowable
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 
 
 # =========================================================
@@ -64,90 +51,46 @@ REPORT_FROM        = os.environ.get("REPORT_FROM", "grafana@ymca-services-occita
 # =========================================================
 # Helpers Loki
 # =========================================================
-def loki_query_instant(expr: str, lookback_days: int = LOOKBACK_DAYS) -> list:
-    """
-    Exécute une requête Loki en mode instant sur les derniers N jours.
-    Retourne la liste des résultats (vecteur de métriques).
-    """
-    end_ns   = int(time.time() * 1e9)
-    start_ns = int((time.time() - lookback_days * 86400) * 1e9)
-
-    params = {
-        "query": expr,
-        "time":  str(end_ns),
-        "limit": "1000",
-    }
-
+def loki_instant_24h(expr: str, ts: int) -> list:
+    """Requête Loki instant [24h] à un timestamp donné (nanosecondes)."""
+    params = {"query": expr, "time": str(ts), "limit": "5000"}
     try:
-        r = requests.get(
-            f"{LOKI_URL}/loki/api/v1/query",
-            params=params,
-            timeout=120
-        )
+        r = requests.get(f"{LOKI_URL}/loki/api/v1/query", params=params, timeout=120)
         r.raise_for_status()
-        data = r.json()
-        return data.get("data", {}).get("result", [])
+        return r.json().get("data", {}).get("result", [])
     except Exception as e:
-        print(f"Loki query error: {e}\nQuery: {expr}")
+        print(f"  Loki error at ts={ts}: {e}")
         return []
 
 
-def loki_query_range(expr: str, lookback_days: int = LOOKBACK_DAYS, step: str = "1d") -> list:
+def loki_query_chunked(expr_template: str, label_key: str = None) -> dict:
     """
-    Exécute une requête Loki en mode range.
-    Retourne la liste des séries.
+    Découpe LOOKBACK_DAYS en tranches de 24h.
+    Additionne les résultats de chaque tranche.
+    expr_template doit contenir {window} → remplacé par [24h].
     """
-    end_ts   = int(time.time())
-    start_ts = end_ts - (lookback_days * 86400)
+    expr   = expr_template.replace("{window}", "[24h]")
+    totals = defaultdict(int)
+    now_ns = int(time.time() * 1e9)
 
-    params = {
-        "query": expr,
-        "start": str(start_ts),
-        "end":   str(end_ts),
-        "step":  step,
-        "limit": "1000",
-    }
+    for day in range(LOOKBACK_DAYS):
+        ts      = now_ns - day * 86400 * int(1e9)
+        results = loki_instant_24h(expr, ts)
 
-    try:
-        r = requests.get(
-            f"{LOKI_URL}/loki/api/v1/query_range",
-            params=params,
-            timeout=120
-        )
-        r.raise_for_status()
-        data = r.json()
-        return data.get("data", {}).get("result", [])
-    except Exception as e:
-        print(f"Loki range query error: {e}\nQuery: {expr}")
-        return []
+        for r in results:
+            metric = r.get("metric", {})
+            value  = r.get("value", [None, "0"])
+            val    = int(float(value[1])) if value and len(value) > 1 else 0
+            key    = metric.get(label_key, "total") if label_key else "total"
+            totals[key] += val
 
-
-def extract_metric_value(results: list, label_key: str = None) -> dict:
-    """
-    Transforme les résultats Loki en dict {label: valeur}.
-    Si label_key=None, retourne {"total": valeur}.
-    """
-    out = {}
-    for r in results:
-        metric = r.get("metric", {})
-        value  = r.get("value", [None, "0"])
-        val    = int(float(value[1])) if value and len(value) > 1 else 0
-
-        if label_key and label_key in metric:
-            out[metric[label_key]] = val
-        else:
-            out["total"] = out.get("total", 0) + val
-    return out
+    return dict(totals)
 
 
 def fmt_bytes(n: int) -> str:
-    """Formate un nombre d'octets en unité lisible."""
-    if n >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.1f} GB"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f} MB"
-    if n >= 1_000:
-        return f"{n / 1_000:.1f} kB"
+    if n >= 1_000_000_000: return f"{n/1_000_000_000:.1f} GB"
+    if n >= 1_000_000:     return f"{n/1_000_000:.1f} MB"
+    if n >= 1_000:         return f"{n/1_000:.1f} kB"
     return f"{n} B"
 
 
@@ -155,111 +98,71 @@ def fmt_bytes(n: int) -> str:
 # Collecte des données
 # =========================================================
 def collect_data() -> dict:
-    """
-    Interroge Loki pour toutes les sections du rapport.
-    Retourne un dict structuré avec toutes les métriques.
-    """
-    print("Collecting data from Loki...")
-    period = f"[{LOOKBACK_DAYS * 24}h]"
-
+    print(f"Collecting data ({LOOKBACK_DAYS} days, chunked 24h)...")
     data = {}
 
-    # ---------------------------------------------------
-    # 1. EntraID — Résumé connexions
-    # ---------------------------------------------------
     print("  - EntraID connexions...")
+    data["entraid_success"] = loki_query_chunked(
+        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json | event_status_errorCode = "0" {window}))'
+    ).get("total", 0)
 
-    res = loki_query_instant(
-        f'sum(count_over_time({{source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"}} | json | event_status_errorCode = "0" {period}))'
-    )
-    data["entraid_success"] = extract_metric_value(res).get("total", 0)
+    data["entraid_failures"] = loki_query_chunked(
+        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json | event_status_errorCode != "0" {window}))'
+    ).get("total", 0)
 
-    res = loki_query_instant(
-        f'sum(count_over_time({{source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"}} | json | event_status_errorCode != "0" {period}))'
-    )
-    data["entraid_failures"] = extract_metric_value(res).get("total", 0)
-
-    # ---------------------------------------------------
-    # 2. EntraID — Codes d'erreur critiques
-    # ---------------------------------------------------
     print("  - EntraID error codes...")
-
-    res = loki_query_instant(
-        f'sum by (errorCode) (count_over_time({{source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"}} | json errorCode="event.status.errorCode" | errorCode != "0" {period}))'
+    data["entraid_error_codes"] = loki_query_chunked(
+        'sum by (errorCode) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json errorCode="event.status.errorCode" | errorCode != "0" {window}))',
+        label_key="errorCode"
     )
-    data["entraid_error_codes"] = extract_metric_value(res, "errorCode")
 
-    # ---------------------------------------------------
-    # 3. EntraID — Top 10 utilisateurs en échec
-    # ---------------------------------------------------
     print("  - EntraID top users...")
-
-    res = loki_query_instant(
-        f'topk(10, sum by (upn) (count_over_time({{source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"}} | json upn="event.userPrincipalName", errorCode="event.status.errorCode" | errorCode != "0" {period})))'
+    data["entraid_top_users"] = loki_query_chunked(
+        'sum by (upn) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json upn="event.userPrincipalName", errorCode="event.status.errorCode" | errorCode != "0" {window}))',
+        label_key="upn"
     )
-    data["entraid_top_users"] = extract_metric_value(res, "upn")
 
-    # ---------------------------------------------------
-    # 4. EntraID — Connexions étrangères
-    # ---------------------------------------------------
     print("  - EntraID foreign logins...")
-
-    res = loki_query_instant(
-        f'sum by (country) (count_over_time({{source="entra_id"}} | json country="event.location.countryOrRegion" | country != "FR" | country != "" {period}))'
+    data["entraid_foreign"] = loki_query_chunked(
+        'sum by (country) (count_over_time({source="entra_id"} | json country="event.location.countryOrRegion" | country != "FR" | country != "" {window}))',
+        label_key="country"
     )
-    data["entraid_foreign"] = extract_metric_value(res, "country")
 
-    # ---------------------------------------------------
-    # 5. IA — Consommation par service
-    # ---------------------------------------------------
-    print("  - AI consumption...")
-
-    res = loki_query_instant(
-        f'sum by (app) (sum_over_time({{job="fortigate"}} |= "GenAI" | logfmt | unwrap sentbyte {period}))'
+    print("  - AI volume...")
+    data["ai_volume"] = loki_query_chunked(
+        'sum by (app) (sum_over_time({job="fortigate"} |= "GenAI" | logfmt | unwrap sentbyte {window}))',
+        label_key="app"
     )
-    data["ai_volume"] = extract_metric_value(res, "app")
 
-    res = loki_query_instant(
-        f'count by (app) (sum by (srcip, app) (count_over_time({{job="fortigate"}} |= "GenAI" | logfmt | srcip != "" | app != "" {period})))'
+    print("  - AI users...")
+    data["ai_users"] = loki_query_chunked(
+        'count by (app) (sum by (srcip, app) (count_over_time({job="fortigate"} |= "GenAI" | logfmt | srcip != "" | app != "" {window})))',
+        label_key="app"
     )
-    data["ai_users"] = extract_metric_value(res, "app")
 
-    # ---------------------------------------------------
-    # 6. VPN — Activité SSL
-    # ---------------------------------------------------
     print("  - VPN activity...")
-
     for action, key in [
         ("ssl-new-con",    "vpn_success"),
         ("ssl-login-fail", "vpn_failures"),
         ("ssl-alert",      "vpn_ssl_alerts"),
     ]:
-        res = loki_query_instant(
-            f'sum(count_over_time({{job="fortigate"}} | logfmt | subtype="vpn" | action="{action}" {period}))'
-        )
-        data[key] = extract_metric_value(res).get("total", 0)
+        data[key] = loki_query_chunked(
+            f'sum(count_over_time({{job="fortigate"}} | logfmt | subtype="vpn" | action="{action}" {{window}}))'
+        ).get("total", 0)
 
-    # ---------------------------------------------------
-    # 7. FortiGate — Top services bloqués
-    # ---------------------------------------------------
     print("  - FortiGate blocked services...")
-
-    res = loki_query_instant(
-        f'topk(10, sum by (service) (count_over_time({{job="fortigate"}} | logfmt | action="deny" | service != "" {period})))'
+    data["forti_blocked"] = loki_query_chunked(
+        'sum by (service) (count_over_time({job="fortigate"} | logfmt | action="deny" | service != "" {window}))',
+        label_key="service"
     )
-    data["forti_blocked"] = extract_metric_value(res, "service")
 
-    # ---------------------------------------------------
-    # 8. FortiGate — Événements critiques par type
-    # ---------------------------------------------------
     print("  - FortiGate critical events...")
-
-    res = loki_query_instant(
-        f'sum by (subtype) (count_over_time({{job="fortigate"}} | logfmt | level=~"alert|error" {period}))'
+    data["forti_critical"] = loki_query_chunked(
+        'sum by (subtype) (count_over_time({job="fortigate"} | logfmt | level=~"alert|error" {window}))',
+        label_key="subtype"
     )
-    data["forti_critical"] = extract_metric_value(res, "subtype")
 
-    print("Data collection complete.")
+    print("Collection complete.")
     return data
 
 
@@ -267,113 +170,52 @@ def collect_data() -> dict:
 # Génération PDF
 # =========================================================
 def build_pdf(data: dict, filepath: str, period_label: str) -> None:
-    """
-    Génère le rapport PDF SOC mensuel.
-    """
-    doc = SimpleDocTemplate(
-        filepath,
-        pagesize=A4,
-        rightMargin=2*cm,
-        leftMargin=2*cm,
-        topMargin=2*cm,
-        bottomMargin=2*cm,
-    )
+    doc = SimpleDocTemplate(filepath, pagesize=A4,
+        rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
 
     styles = getSampleStyleSheet()
-
-    # Styles personnalisés
-    title_style = ParagraphStyle(
-        "SOCTitle",
-        parent=styles["Title"],
-        fontSize=22,
-        textColor=colors.HexColor("#1a1a2e"),
-        spaceAfter=6,
-        alignment=TA_CENTER,
-    )
-    subtitle_style = ParagraphStyle(
-        "SOCSubtitle",
-        parent=styles["Normal"],
-        fontSize=11,
-        textColor=colors.HexColor("#555555"),
-        spaceAfter=20,
-        alignment=TA_CENTER,
-    )
-    h1_style = ParagraphStyle(
-        "SOCH1",
-        parent=styles["Heading1"],
-        fontSize=14,
-        textColor=colors.HexColor("#1a1a2e"),
-        borderPad=4,
-        spaceBefore=20,
-        spaceAfter=10,
-    )
-    h2_style = ParagraphStyle(
-        "SOCH2",
-        parent=styles["Heading2"],
-        fontSize=11,
-        textColor=colors.HexColor("#333333"),
-        spaceBefore=12,
-        spaceAfter=6,
-    )
     normal = styles["Normal"]
-    small  = ParagraphStyle("small", parent=normal, fontSize=9, textColor=colors.HexColor("#666666"))
 
-    # Couleurs tableau
-    HDR_BG   = colors.HexColor("#1a1a2e")
-    HDR_FG   = colors.white
-    ROW_ALT  = colors.HexColor("#f5f5f5")
-    ROW_NORM = colors.white
+    title_s    = ParagraphStyle("t",  parent=styles["Title"],   fontSize=22, textColor=colors.HexColor("#1a1a2e"), alignment=TA_CENTER, spaceAfter=6)
+    sub_s      = ParagraphStyle("s",  parent=normal,             fontSize=11, textColor=colors.HexColor("#555555"), alignment=TA_CENTER, spaceAfter=20)
+    h1_s       = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=14, textColor=colors.HexColor("#1a1a2e"), spaceBefore=20, spaceAfter=10)
+    h2_s       = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=11, textColor=colors.HexColor("#333333"), spaceBefore=12, spaceAfter=6)
+    small_s    = ParagraphStyle("sm", parent=normal, fontSize=9, textColor=colors.HexColor("#666666"))
+    footer_s   = ParagraphStyle("ft", parent=normal, fontSize=8, textColor=colors.HexColor("#999999"), alignment=TA_CENTER)
 
-    def make_table(headers, rows, col_widths=None):
-        """Helper pour créer un tableau stylisé."""
-        table_data = [[Paragraph(f"<b>{h}</b>", ParagraphStyle("th", parent=normal, fontSize=9, textColor=HDR_FG))] if isinstance(h, str) else h for h in headers]
-        table_data = [headers] + rows
+    HDR   = colors.HexColor("#1a1a2e")
+    ALT   = colors.HexColor("#f5f5f5")
 
-        t = Table(table_data, colWidths=col_widths)
-        style = TableStyle([
-            ("BACKGROUND",  (0, 0), (-1, 0),  HDR_BG),
-            ("TEXTCOLOR",   (0, 0), (-1, 0),  HDR_FG),
-            ("FONTSIZE",    (0, 0), (-1, 0),  9),
-            ("FONTNAME",    (0, 0), (-1, 0),  "Helvetica-Bold"),
-            ("ALIGN",       (0, 0), (-1, -1), "LEFT"),
-            ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [ROW_NORM, ROW_ALT]),
-            ("FONTSIZE",    (0, 1), (-1, -1), 9),
-            ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
-            ("TOPPADDING",  (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ])
-        t.setStyle(style)
+    def tbl(headers, rows, widths=None):
+        t = Table([headers] + rows, colWidths=widths)
+        t.setStyle(TableStyle([
+            ("BACKGROUND",     (0,0), (-1,0),  HDR),
+            ("TEXTCOLOR",      (0,0), (-1,0),  colors.white),
+            ("FONTNAME",       (0,0), (-1,0),  "Helvetica-Bold"),
+            ("FONTSIZE",       (0,0), (-1,-1), 9),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, ALT]),
+            ("GRID",           (0,0), (-1,-1), 0.5, colors.HexColor("#dddddd")),
+            ("TOPPADDING",     (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING",  (0,0), (-1,-1), 5),
+            ("LEFTPADDING",    (0,0), (-1,-1), 8),
+        ]))
         return t
+
+    def hr(): return HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc"))
+    def sp(n=0.3): return Spacer(1, n*cm)
 
     story = []
 
-    # -------------------------------------------------------
-    # PAGE DE GARDE
-    # -------------------------------------------------------
-    story.append(Spacer(1, 3*cm))
-    story.append(Paragraph("SOC-Mini YMCA", title_style))
-    story.append(Paragraph("Rapport de sécurité mensuel", subtitle_style))
-    story.append(Paragraph(f"Période : {period_label}", subtitle_style))
-    story.append(Paragraph(f"Généré le : {datetime.now().strftime('%d/%m/%Y à %H:%M')}", subtitle_style))
-    story.append(Spacer(1, 1*cm))
-    story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1a1a2e")))
-    story.append(Spacer(1, 0.5*cm))
-    story.append(Paragraph(
-        "Ce rapport est généré automatiquement à partir des logs collectés par la stack SOC-Mini "
-        "(Loki / Promtail / FortiGate / Entra ID). Les données couvrent la période indiquée ci-dessus.",
-        small
-    ))
-    story.append(PageBreak())
+    # Page de garde
+    story += [sp(3), Paragraph("SOC-Mini YMCA", title_s),
+              Paragraph("Rapport de securite mensuel", sub_s),
+              Paragraph(f"Periode : {period_label}", sub_s),
+              Paragraph(f"Genere le : {datetime.now().strftime('%d/%m/%Y a %H:%M')}", sub_s),
+              sp(1), HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1a1a2e")), sp(0.5),
+              Paragraph("Rapport genere automatiquement par la stack SOC-Mini (Loki / Promtail / FortiGate / Entra ID).", small_s),
+              PageBreak()]
 
-    # -------------------------------------------------------
-    # SECTION 1 — RÉSUMÉ EXÉCUTIF
-    # -------------------------------------------------------
-    story.append(Paragraph("1. Résumé exécutif", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
-
+    # Calculs résumé
     total_auth = data["entraid_success"] + data["entraid_failures"]
     fail_rate  = (data["entraid_failures"] / total_auth * 100) if total_auth > 0 else 0
     lockouts   = data["entraid_error_codes"].get("50053", 0)
@@ -381,241 +223,132 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
     total_ai   = sum(data["ai_volume"].values())
     foreign    = sum(data["entraid_foreign"].values())
 
-    kpi_rows = [
-        ["Connexions Entra ID réussies",  str(data["entraid_success"]),  ""],
-        ["Connexions Entra ID échouées",  str(data["entraid_failures"]),  f"{fail_rate:.1f}% du total"],
-        ["Comptes verrouillés (50053)",   str(lockouts),    "⚠ Critique si > 0" if lockouts > 0 else "OK"],
-        ["Tentatives brute-force (50126)",str(bruteforce),  "⚠ Surveiller" if bruteforce > 30 else "Normal"],
-        ["Connexions depuis l'étranger",  str(foreign),     "⚠ A qualifier" if foreign > 0 else "Aucune"],
-        ["Volume total vers services IA", fmt_bytes(total_ai), ""],
-        ["Tunnels VPN établis",           str(data["vpn_success"]),  ""],
-        ["Échecs login VPN",              str(data["vpn_failures"]),  "⚠ Surveiller" if data["vpn_failures"] > 10 else "Normal"],
-    ]
-
-    story.append(make_table(
-        ["Indicateur", "Valeur", "Interprétation"],
-        kpi_rows,
-        col_widths=[9*cm, 3*cm, 5.5*cm]
+    # Section 1 — Résumé
+    story += [Paragraph("1. Resume executif", h1_s), hr(), sp()]
+    story.append(tbl(
+        ["Indicateur", "Valeur", "Interpretation"],
+        [
+            ["Connexions Entra ID reussies",   str(data["entraid_success"]),  ""],
+            ["Connexions Entra ID echouees",   str(data["entraid_failures"]), f"{fail_rate:.1f}% du total"],
+            ["Comptes verouilles (50053)",     str(lockouts),    "A verifier" if lockouts > 0 else "OK"],
+            ["Brute-force (50126)",            str(bruteforce),  "Surveiller" if bruteforce > 30 else "Normal"],
+            ["Connexions depuis l'etranger",   str(foreign),     "A qualifier" if foreign > 0 else "Aucune"],
+            ["Volume total vers services IA",  fmt_bytes(total_ai), ""],
+            ["Tunnels VPN etablis",            str(data["vpn_success"]),  ""],
+            ["Echecs login VPN",               str(data["vpn_failures"]), "Surveiller" if data["vpn_failures"] > 10 else "Normal"],
+        ],
+        widths=[9*cm, 3*cm, 5.5*cm]
     ))
     story.append(PageBreak())
 
-    # -------------------------------------------------------
-    # SECTION 2 — ALERTES CRITIQUES ENTRA ID
-    # -------------------------------------------------------
-    story.append(Paragraph("2. Alertes critiques Entra ID", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
+    # Section 2 — EntraID
+    story += [Paragraph("2. Alertes critiques Entra ID", h1_s), hr(), sp(),
+              Paragraph("2.1 Top codes d'erreur", h2_s)]
 
-    # Codes d'erreur
-    story.append(Paragraph("2.1 Top codes d'erreur", h2_style))
     ERROR_LABELS = {
-        "50126": "Identifiants invalides",
-        "50125": "Echec authentification",
-        "50053": "Compte verrouillé",
-        "50055": "Mot de passe expiré",
-        "50057": "Compte désactivé",
-        "50074": "MFA requis / interruption",
-        "50072": "MFA requis / interaction",
-        "70044": "Token expiré / CA",
-        "9002341": "SSO à autoriser",
+        "50126":"Identifiants invalides","50125":"Echec auth","50053":"Compte verouille",
+        "50055":"MDP expire","50057":"Compte desactive","50074":"MFA requis",
+        "50072":"MFA / interaction","70044":"Token expire","9002341":"SSO a autoriser",
     }
     error_rows = sorted(data["entraid_error_codes"].items(), key=lambda x: x[1], reverse=True)
     if error_rows:
-        story.append(make_table(
-            ["Code erreur", "Description", "Occurrences"],
-            [[code, ERROR_LABELS.get(code, "Autre"), str(count)] for code, count in error_rows[:10]],
-            col_widths=[3*cm, 10*cm, 4.5*cm]
-        ))
+        story.append(tbl(["Code", "Description", "Occurrences"],
+            [[c, ERROR_LABELS.get(c,"Autre"), str(v)] for c,v in error_rows[:10]],
+            widths=[3*cm, 10*cm, 4.5*cm]))
     else:
-        story.append(Paragraph("Aucune erreur détectée sur la période.", normal))
+        story.append(Paragraph("Aucune erreur detectee.", normal))
 
-    story.append(Spacer(1, 0.5*cm))
-
-    # Top utilisateurs en échec
-    story.append(Paragraph("2.2 Top utilisateurs avec échecs d'authentification", h2_style))
+    story += [sp(), Paragraph("2.2 Top utilisateurs (echecs auth)", h2_s)]
     user_rows = sorted(data["entraid_top_users"].items(), key=lambda x: x[1], reverse=True)
     if user_rows:
-        story.append(make_table(
-            ["Utilisateur", "Échecs"],
-            [[upn, str(count)] for upn, count in user_rows[:10]],
-            col_widths=[13*cm, 4.5*cm]
-        ))
+        story.append(tbl(["Utilisateur","Echecs"],
+            [[u, str(v)] for u,v in user_rows[:10]], widths=[13*cm, 4.5*cm]))
     else:
-        story.append(Paragraph("Aucun échec utilisateur significatif.", normal))
-
+        story.append(Paragraph("Aucun echec significatif.", normal))
     story.append(PageBreak())
 
-    # -------------------------------------------------------
-    # SECTION 3 — CONNEXIONS ÉTRANGÈRES
-    # -------------------------------------------------------
-    story.append(Paragraph("3. Connexions depuis l'étranger", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
-
+    # Section 3 — Connexions étrangères
+    story += [Paragraph("3. Connexions depuis l'etranger", h1_s), hr(), sp()]
     if data["entraid_foreign"]:
-        foreign_rows = sorted(data["entraid_foreign"].items(), key=lambda x: x[1], reverse=True)
-        story.append(make_table(
-            ["Pays", "Connexions"],
-            [[country, str(count)] for country, count in foreign_rows],
-            col_widths=[13*cm, 4.5*cm]
-        ))
-        story.append(Spacer(1, 0.3*cm))
-        story.append(Paragraph(
-            "Note : Une connexion étrangère peut être légitime (VPN, déplacement) ou indiquer "
-            "une compromission de compte. Chaque occurrence doit être qualifiée.",
-            small
-        ))
+        story.append(tbl(["Pays","Connexions"],
+            [[c, str(v)] for c,v in sorted(data["entraid_foreign"].items(), key=lambda x: x[1], reverse=True)],
+            widths=[13*cm, 4.5*cm]))
+        story += [sp(), Paragraph("Une connexion etrangere peut etre legitime (VPN, deplacement) ou indiquer une compromission. A qualifier.", small_s)]
     else:
-        story.append(Paragraph("Aucune connexion depuis l'étranger détectée sur la période.", normal))
-
+        story.append(Paragraph("Aucune connexion etrangere detectee.", normal))
     story.append(PageBreak())
 
-    # -------------------------------------------------------
-    # SECTION 4 — CONSOMMATION IA
-    # -------------------------------------------------------
-    story.append(Paragraph("4. Consommation des services IA", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
-
+    # Section 4 — IA
+    story += [Paragraph("4. Consommation des services IA", h1_s), hr(), sp()]
     all_apps = set(list(data["ai_volume"].keys()) + list(data["ai_users"].keys()))
     if all_apps:
-        ai_rows = []
-        for app in sorted(all_apps):
-            volume = data["ai_volume"].get(app, 0)
-            users  = data["ai_users"].get(app, 0)
-            ai_rows.append([app, fmt_bytes(volume), str(users)])
-        ai_rows.sort(key=lambda x: data["ai_volume"].get(x[0], 0), reverse=True)
-
-        story.append(make_table(
-            ["Service IA", "Volume envoyé (sentbyte)", "Postes distincts"],
-            ai_rows,
-            col_widths=[7*cm, 6*cm, 4.5*cm]
-        ))
-        story.append(Spacer(1, 0.3*cm))
-        story.append(Paragraph(
-            "Volume total envoyé vers les services IA : " + fmt_bytes(total_ai),
-            normal
-        ))
-        story.append(Spacer(1, 0.2*cm))
-        story.append(Paragraph(
-            "Un volume élevé peut indiquer une utilisation intensive ou un risque de fuite "
-            "de données sensibles. Croiser avec la politique d'usage des outils IA de l'organisation.",
-            small
-        ))
+        ai_rows = sorted([[a, fmt_bytes(data["ai_volume"].get(a,0)), str(data["ai_users"].get(a,0))] for a in all_apps],
+                          key=lambda x: data["ai_volume"].get(x[0],0), reverse=True)
+        story.append(tbl(["Service IA","Volume envoye","Postes distincts"], ai_rows, widths=[7*cm,6*cm,4.5*cm]))
+        story += [sp(), Paragraph(f"Volume total : {fmt_bytes(total_ai)}", normal), sp(0.2),
+                  Paragraph("Un volume eleve peut indiquer une fuite de donnees sensibles. A croiser avec la politique IA.", small_s)]
     else:
-        story.append(Paragraph("Aucune consommation IA détectée sur la période.", normal))
-
+        story.append(Paragraph("Aucune consommation IA detectee.", normal))
     story.append(PageBreak())
 
-    # -------------------------------------------------------
-    # SECTION 5 — ACTIVITÉ VPN
-    # -------------------------------------------------------
-    story.append(Paragraph("5. Activité VPN SSL", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
-
-    vpn_rows = [
-        ["Tunnels établis (ssl-new-con)",      str(data["vpn_success"]),    "Connexions légitimes"],
-        ["Échecs login (ssl-login-fail)",       str(data["vpn_failures"]),   "⚠ Tentatives échouées" if data["vpn_failures"] > 10 else "Normal"],
-        ["Erreurs SSL (ssl-alert/exit-error)", str(data["vpn_ssl_alerts"]), "Bruit de fond internet (scanners)"],
-    ]
-    story.append(make_table(
-        ["Événement", "Occurrences", "Interprétation"],
-        vpn_rows,
-        col_widths=[7*cm, 3.5*cm, 7*cm]
-    ))
-    story.append(Spacer(1, 0.3*cm))
-    story.append(Paragraph(
-        "Les erreurs SSL (ssl-alert) sont typiquement du bruit de fond internet — des scanners automatiques "
-        "qui sondent les VPN Fortinet exposés. Un volume élevé d'échecs login mérite investigation.",
-        small
-    ))
-
+    # Section 5 — VPN
+    story += [Paragraph("5. Activite VPN SSL", h1_s), hr(), sp()]
+    story.append(tbl(["Evenement","Occurrences","Interpretation"], [
+        ["Tunnels etablis (ssl-new-con)",      str(data["vpn_success"]),    "Connexions legitimes"],
+        ["Echecs login (ssl-login-fail)",       str(data["vpn_failures"]),   "Surveiller" if data["vpn_failures"]>10 else "Normal"],
+        ["Erreurs SSL (ssl-alert/exit-error)", str(data["vpn_ssl_alerts"]), "Bruit de fond (scanners)"],
+    ], widths=[7*cm, 3.5*cm, 7*cm]))
+    story += [sp(), Paragraph("Les erreurs SSL sont du bruit de fond internet. Les echecs login meritent investigation.", small_s)]
     story.append(PageBreak())
 
-    # -------------------------------------------------------
-    # SECTION 6 — TOP SERVICES BLOQUÉS
-    # -------------------------------------------------------
-    story.append(Paragraph("6. Top services bloqués FortiGate", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.3*cm))
-
+    # Section 6 — FortiGate
+    story += [Paragraph("6. Top services bloques FortiGate", h1_s), hr(), sp()]
     if data["forti_blocked"]:
-        blocked_rows = sorted(data["forti_blocked"].items(), key=lambda x: x[1], reverse=True)
-        story.append(make_table(
-            ["Service / Application", "Blocages"],
-            [[svc, str(count)] for svc, count in blocked_rows],
-            col_widths=[13*cm, 4.5*cm]
-        ))
+        story.append(tbl(["Service / Application","Blocages"],
+            [[s, str(v)] for s,v in sorted(data["forti_blocked"].items(), key=lambda x: x[1], reverse=True)[:10]],
+            widths=[13*cm, 4.5*cm]))
     else:
-        story.append(Paragraph("Aucun service bloqué détecté sur la période.", normal))
+        story.append(Paragraph("Aucun service bloque detecte.", normal))
 
-    story.append(Spacer(1, 0.5*cm))
-
-    # Événements critiques
-    story.append(Paragraph("6.1 Événements critiques FortiGate (level=alert/error)", h2_style))
+    story += [sp(), Paragraph("6.1 Evenements critiques (level=alert/error)", h2_s)]
     if data["forti_critical"]:
-        crit_rows = sorted(data["forti_critical"].items(), key=lambda x: x[1], reverse=True)
-        story.append(make_table(
-            ["Sous-type", "Occurrences"],
-            [[subtype, str(count)] for subtype, count in crit_rows],
-            col_widths=[13*cm, 4.5*cm]
-        ))
+        story.append(tbl(["Sous-type","Occurrences"],
+            [[s, str(v)] for s,v in sorted(data["forti_critical"].items(), key=lambda x: x[1], reverse=True)],
+            widths=[13*cm, 4.5*cm]))
     else:
-        story.append(Paragraph("Aucun événement critique détecté.", normal))
+        story.append(Paragraph("Aucun evenement critique detecte.", normal))
 
-    # -------------------------------------------------------
-    # PIED DE PAGE
-    # -------------------------------------------------------
-    story.append(Spacer(1, 1*cm))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
-    story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        f"Rapport généré automatiquement par SOC-Mini YMCA • {datetime.now().strftime('%d/%m/%Y')} • "
-        "Données issues de Loki / FortiGate / Microsoft Entra ID",
-        ParagraphStyle("footer", parent=normal, fontSize=8, textColor=colors.HexColor("#999999"), alignment=TA_CENTER)
-    ))
+    # Pied de page
+    story += [sp(1), HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")), sp(0.2),
+              Paragraph(f"Rapport genere automatiquement par SOC-Mini YMCA - {datetime.now().strftime('%d/%m/%Y')} - Loki / FortiGate / Entra ID", footer_s)]
 
-    # Build
     doc.build(story)
     print(f"PDF generated: {filepath}")
 
 
 # =========================================================
-# Envoi email via Mailjet
+# Envoi email
 # =========================================================
 def send_email(pdf_path: str, period_label: str) -> None:
-    """
-    Envoie le rapport PDF par email via Mailjet (SMTP).
-    """
     msg = MIMEMultipart()
     msg["From"]    = REPORT_FROM
     msg["To"]      = REPORT_TO
     msg["Subject"] = f"[SOC-Mini YMCA] Rapport mensuel - {period_label}"
-
-    body = MIMEText(
-        f"Bonjour,\n\n"
-        f"Veuillez trouver en pièce jointe le rapport de sécurité mensuel SOC-Mini YMCA "
-        f"pour la période : {period_label}.\n\n"
-        f"Ce rapport a été généré automatiquement à partir des données Loki.\n\n"
-        f"Cordialement,\nSOC-Mini YMCA",
-        "plain"
-    )
-    msg.attach(body)
+    msg.attach(MIMEText(
+        f"Bonjour,\n\nVeuillez trouver en piece jointe le rapport mensuel SOC-Mini YMCA "
+        f"pour la periode : {period_label}.\n\nCordialement,\nSOC-Mini YMCA", "plain"))
 
     with open(pdf_path, "rb") as f:
-        attachment = MIMEBase("application", "octet-stream")
-        attachment.set_payload(f.read())
-        encoders.encode_base64(attachment)
-        filename = os.path.basename(pdf_path)
-        attachment.add_header("Content-Disposition", f"attachment; filename={filename}")
-        msg.attach(attachment)
+        att = MIMEBase("application", "octet-stream")
+        att.set_payload(f.read())
+        encoders.encode_base64(att)
+        att.add_header("Content-Disposition", f"attachment; filename={os.path.basename(pdf_path)}")
+        msg.attach(att)
 
-    with smtplib.SMTP("in-v3.mailjet.com", 587) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(MAILJET_API_KEY, MAILJET_SECRET_KEY)
-        server.sendmail(REPORT_FROM, REPORT_TO, msg.as_string())
+    with smtplib.SMTP("in-v3.mailjet.com", 587) as s:
+        s.ehlo(); s.starttls()
+        s.login(MAILJET_API_KEY, MAILJET_SECRET_KEY)
+        s.sendmail(REPORT_FROM, REPORT_TO, msg.as_string())
 
     print(f"Email sent to {REPORT_TO}")
 
@@ -625,28 +358,20 @@ def send_email(pdf_path: str, period_label: str) -> None:
 # =========================================================
 def main() -> None:
     os.makedirs(REPORT_DIR, exist_ok=True)
-
-    # Période du rapport
-    now       = datetime.now(timezone.utc)
-    last_month = now - timedelta(days=LOOKBACK_DAYS)
+    now          = datetime.now(timezone.utc)
+    last_month   = now - timedelta(days=LOOKBACK_DAYS)
     period_label = f"{last_month.strftime('%d/%m/%Y')} - {now.strftime('%d/%m/%Y')}"
+    filename     = f"soc-report-{now.strftime('%Y-%m')}.pdf"
+    filepath     = os.path.join(REPORT_DIR, filename)
 
-    filename = f"soc-report-{now.strftime('%Y-%m')}.pdf"
-    filepath = os.path.join(REPORT_DIR, filename)
-
-    print(f"=== SOC-Mini Report Generator ===")
+    print("=== SOC-Mini Report Generator ===")
     print(f"Period : {period_label}")
+    print(f"Chunks : {LOOKBACK_DAYS} x 24h")
     print(f"Output : {filepath}")
 
-    # Collecte
     data = collect_data()
-
-    # Génération PDF
     build_pdf(data, filepath, period_label)
-
-    # Envoi email
     send_email(filepath, period_label)
-
     print("=== Report done ===")
 
 
