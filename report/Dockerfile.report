@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY soc_report.py /app/soc_report.py
+
+RUN pip install --no-cache-dir requests reportlab
+
+CMD ["python", "/app/soc_report.py"]

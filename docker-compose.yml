@@ -206,6 +206,46 @@ services:
     depends_on:
       - loki
 
+  ###########################################################################
+  # SOC Report Generator : génère un rapport PDF mensuel et l'envoie par email
+  ###########################################################################
+  soc-report:
+    build:
+      context: ./report
+      dockerfile: Dockerfile.report
+    container_name: soc-report
+
+    # Injection des secrets depuis .env
+    env_file:
+      - .env
+
+    environment:
+      # URL de Loki (interne au réseau Docker)
+      - LOKI_URL=http://loki:3100
+
+      # Email destinataire du rapport
+      - REPORT_TO=monitoring@ymca-services-occitanie.com
+
+      # Période couverte par le rapport (en jours)
+      - LOOKBACK_DAYS=30
+
+      # Dossier de sortie des PDFs
+      - REPORT_DIR=/reports
+
+      # Logs lisibles dans "docker logs"
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      # Rapports PDF générés (persistants sur le NAS)
+      - ./reports:/reports
+
+    # Ce conteneur ne tourne PAS en permanence.
+    # Il s'exécute UNE FOIS puis s'arrête.
+    # Le déclenchement mensuel se fait via une tâche planifiée Synology.
+    restart: "no"
+
+    depends_on:
+      - loki
 
 ###############################################################################
 # Volumes persistants
