@@ -100,4 +100,6 @@ limits_config:
   # - Loki = supervision active (court terme)
   # - Archivage long terme = autre stockage
   retention_period: 1440h
-  query_timeout: 300s
+  query_timeout: 300s  
+  max_query_length: 0
+  max_query_lookback: 0
