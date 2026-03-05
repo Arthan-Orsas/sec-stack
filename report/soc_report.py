@@ -64,17 +64,12 @@ def loki_instant_24h(expr: str, ts: int) -> list:
 
 
 def loki_query_chunked(expr_template: str, label_key: str = None) -> dict:
-    """
-    Découpe LOOKBACK_DAYS en tranches de 24h.
-    Additionne les résultats de chaque tranche.
-    expr_template doit contenir {window} → remplacé par [24h].
-    """
     expr   = expr_template.replace("{window}", "[24h]")
     totals = defaultdict(int)
-    now_ns = int(time.time() * 1e9)
+    now_s  = int(time.time())
 
     for day in range(LOOKBACK_DAYS):
-        ts      = now_ns - day * 86400 * int(1e9)
+        ts      = now_s - day * 86400
         results = loki_instant_24h(expr, ts)
 
         for r in results:
