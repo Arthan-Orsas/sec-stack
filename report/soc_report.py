@@ -14,6 +14,7 @@ Optionnelles : LOKI_URL, REPORT_FROM, REPORT_DIR, LOOKBACK_DAYS
 """
 
 import os
+import json
 import time
 import requests
 import smtplib
@@ -56,7 +57,9 @@ def loki_instant_24h(expr: str, ts: int) -> list:
     params = {"query": expr, "time": str(ts), "limit": "5000"}
     try:
         r = requests.get(f"{LOKI_URL}/loki/api/v1/query", params=params, timeout=120)
-        r.raise_for_status()
+        if r.status_code != 200:
+            print(f"  Loki {r.status_code} at ts={ts}: {r.text[:300]}")
+            return []
         return r.json().get("data", {}).get("result", [])
     except Exception as e:
         print(f"  Loki error at ts={ts}: {e}")
@@ -64,9 +67,14 @@ def loki_instant_24h(expr: str, ts: int) -> list:
 
 
 def loki_query_chunked(expr_template: str, label_key: str = None) -> dict:
+    """
+    Découpe LOOKBACK_DAYS en tranches de 24h.
+    Additionne les résultats de chaque tranche.
+    expr_template doit contenir {window} → remplacé par [24h].
+    """
     expr   = expr_template.replace("{window}", "[24h]")
     totals = defaultdict(int)
-    now_s  = int(time.time())
+    now_s = int(time.time())
 
     for day in range(LOOKBACK_DAYS):
         ts      = now_s - day * 86400
@@ -81,6 +89,30 @@ def loki_query_chunked(expr_template: str, label_key: str = None) -> dict:
 
     return dict(totals)
 
+
+
+def loki_query_logs(expr: str, limit: int = 1000) -> list:
+    """Fetch raw log entries over LOOKBACK_DAYS via query_range."""
+    end   = int(time.time())
+    start = end - LOOKBACK_DAYS * 86400
+    params = {"query": expr, "start": str(start), "end": str(end),
+              "limit": str(limit), "direction": "forward"}
+    try:
+        r = requests.get(f"{LOKI_URL}/loki/api/v1/query_range", params=params, timeout=120)
+        if r.status_code != 200:
+            print(f"  Loki logs error: {r.text[:200]}")
+            return []
+        entries = []
+        for stream in r.json().get("data", {}).get("result", []):
+            for ts, line in stream.get("values", []):
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    pass
+        return entries
+    except Exception as e:
+        print(f"  Loki logs error: {e}")
+        return []
 
 def fmt_bytes(n: int) -> str:
     if n >= 1_000_000_000: return f"{n/1_000_000_000:.1f} GB"
@@ -98,22 +130,22 @@ def collect_data() -> dict:
 
     print("  - EntraID connexions...")
     data["entraid_success"] = loki_query_chunked(
-        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json | event_status_errorCode = "0" {window}))'
+        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*[.]jsonl"} | json | event_status_errorCode = "0" {window}))'
     ).get("total", 0)
 
     data["entraid_failures"] = loki_query_chunked(
-        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json | event_status_errorCode != "0" {window}))'
+        'sum(count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*[.]jsonl"} | json | event_status_errorCode != "0" {window}))'
     ).get("total", 0)
 
     print("  - EntraID error codes...")
     data["entraid_error_codes"] = loki_query_chunked(
-        'sum by (errorCode) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json errorCode="event.status.errorCode" | errorCode != "0" {window}))',
+        'sum by (errorCode) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*[.]jsonl"} | json errorCode="event.status.errorCode" | errorCode != "0" {window}))',
         label_key="errorCode"
     )
 
     print("  - EntraID top users...")
     data["entraid_top_users"] = loki_query_chunked(
-        'sum by (upn) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*\\.jsonl"} | json upn="event.userPrincipalName", errorCode="event.status.errorCode" | errorCode != "0" {window}))',
+        'sum by (upn) (count_over_time({source="entra_id", filename=~"/logs/entra_signins_.*[.]jsonl"} | json upn="event.userPrincipalName", errorCode="event.status.errorCode" | errorCode != "0" {window}))',
         label_key="upn"
     )
 
@@ -155,6 +187,11 @@ def collect_data() -> dict:
     data["forti_critical"] = loki_query_chunked(
         'sum by (subtype) (count_over_time({job="fortigate"} | logfmt | level=~"alert|error" {window}))',
         label_key="subtype"
+    )
+
+    print("  - EntraID foreign login details...")
+    data["entraid_foreign_details"] = loki_query_logs(
+        '{source="entra_id"} | json country="event.location.countryOrRegion" | country != "FR" | country != ""'
     )
 
     print("Collection complete.")
@@ -271,6 +308,31 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
         story += [sp(), Paragraph("Une connexion etrangere peut etre legitime (VPN, deplacement) ou indiquer une compromission. A qualifier.", small_s)]
     else:
         story.append(Paragraph("Aucune connexion etrangere detectee.", normal))
+    # Tableau détaillé des tentatives étrangères
+    if data.get("entraid_foreign_details"):
+        story += [sp(), Paragraph("3.1 Detail des tentatives", h2_s)]
+        detail_rows = []
+        for entry in data["entraid_foreign_details"]:
+            ev = entry.get("event", {})
+            status = ev.get("status", {})
+            error  = status.get("errorCode", "")
+            locked = "OUI" if str(error) == "50053" else ""
+            result = "Reussie" if str(error) == "0" else "Echec"
+            detail_rows.append([
+                ev.get("createdDateTime", "")[:16].replace("T", " "),
+                ev.get("userDisplayName", ev.get("userPrincipalName", "")),
+                ev.get("ipAddress", ""),
+                ev.get("location", {}).get("countryOrRegion", ""),
+                result,
+                locked,
+            ])
+        detail_rows.sort(key=lambda x: x[0])
+        story.append(tbl(
+            ["Date/Heure (UTC)", "Utilisateur", "IP Source", "Pays", "Resultat", "Verrouille"],
+            detail_rows,
+            widths=[3.5*cm, 5*cm, 3.5*cm, 1.5*cm, 2*cm, 2*cm]
+        ))
+
     story.append(PageBreak())
 
     # Section 4 — IA
