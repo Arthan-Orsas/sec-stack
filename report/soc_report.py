@@ -31,7 +31,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, HRFlowable
+    PageBreak, HRFlowable, Image
 )
 from reportlab.lib.enums import TA_CENTER
 
@@ -47,6 +47,7 @@ MAILJET_API_KEY    = os.environ["MAILJET_API_KEY"]
 MAILJET_SECRET_KEY = os.environ["MAILJET_SECRET_KEY"]
 REPORT_TO          = os.environ["REPORT_TO"]
 REPORT_FROM        = os.environ.get("REPORT_FROM", "grafana@ymca-services-occitanie.com")
+REPORT_TYPE        = os.environ.get("REPORT_TYPE", "mensuel")
 
 
 # =========================================================
@@ -201,6 +202,19 @@ def collect_data() -> dict:
 # =========================================================
 # Génération PDF
 # =========================================================
+
+YMCA_GREEN = colors.HexColor("#95C11F")
+
+def add_watermark(canvas, doc):
+    canvas.saveState()
+    canvas.setFont("Helvetica-Bold", 70)
+    canvas.setFillColor(colors.HexColor("#95C11F"))
+    canvas.setFillAlpha(0.15)
+    canvas.translate(A4[0]/2, A4[1]/2)
+    canvas.rotate(45)
+    canvas.drawCentredString(0, 0, "CONFIDENTIEL")
+    canvas.restoreState()
+
 def build_pdf(data: dict, filepath: str, period_label: str) -> None:
     doc = SimpleDocTemplate(filepath, pagesize=A4,
         rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
@@ -208,14 +222,14 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
     styles = getSampleStyleSheet()
     normal = styles["Normal"]
 
-    title_s    = ParagraphStyle("t",  parent=styles["Title"],   fontSize=22, textColor=colors.HexColor("#1a1a2e"), alignment=TA_CENTER, spaceAfter=6)
+    title_s    = ParagraphStyle("t",  parent=styles["Title"],   fontSize=36, fontName="Helvetica-Bold", textColor=colors.HexColor("#95C11F"), alignment=TA_CENTER, spaceAfter=6)
     sub_s      = ParagraphStyle("s",  parent=normal,             fontSize=11, textColor=colors.HexColor("#555555"), alignment=TA_CENTER, spaceAfter=20)
-    h1_s       = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=14, textColor=colors.HexColor("#1a1a2e"), spaceBefore=20, spaceAfter=10)
-    h2_s       = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=11, textColor=colors.HexColor("#333333"), spaceBefore=12, spaceAfter=6)
+    h1_s       = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=22, fontName="Helvetica-BoldOblique", textColor=colors.HexColor("#95C11F"), spaceBefore=20, spaceAfter=10)
+    h2_s       = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=18, fontName="Helvetica-Bold", textColor=colors.HexColor("#95C11F"), spaceBefore=12, spaceAfter=6)
     small_s    = ParagraphStyle("sm", parent=normal, fontSize=9, textColor=colors.HexColor("#666666"))
     footer_s   = ParagraphStyle("ft", parent=normal, fontSize=8, textColor=colors.HexColor("#999999"), alignment=TA_CENTER)
 
-    HDR   = colors.HexColor("#1a1a2e")
+    HDR   = colors.HexColor("#002E10")
     ALT   = colors.HexColor("#f5f5f5")
 
     def tbl(headers, rows, widths=None):
@@ -239,12 +253,19 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
     story = []
 
     # Page de garde
-    story += [sp(3), Paragraph("SOC-Mini YMCA", title_s),
-              Paragraph("Rapport de securite mensuel", sub_s),
+    import os as _os
+    logo_path = "/app/ymca_logo.png"
+    logo_els  = []
+    if _os.path.exists(logo_path):
+        logo = Image(logo_path, width=14*cm, height=9*cm)
+        logo.hAlign = "CENTER"
+        logo_els = [logo, sp(0.5)]
+    story += [sp(1)] + logo_els + [sp(1), Paragraph("Sec-Stack YMCA", title_s),
+              sp(0.5), Paragraph(f"Rapport de securite {REPORT_TYPE.capitalize()}", sub_s),
               Paragraph(f"Periode : {period_label}", sub_s),
               Paragraph(f"Genere le : {datetime.now().strftime('%d/%m/%Y a %H:%M')}", sub_s),
-              sp(1), HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1a1a2e")), sp(0.5),
-              Paragraph("Rapport genere automatiquement par la stack SOC-Mini (Loki / Promtail / FortiGate / Entra ID).", small_s),
+              sp(1), HRFlowable(width="100%", thickness=2, color=colors.HexColor("#002E10")), sp(0.5),
+              Paragraph(f"Rapport {REPORT_TYPE} automatique de Sec-Stack", small_s),
               PageBreak()]
 
     # Calculs résumé
@@ -377,9 +398,9 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
 
     # Pied de page
     story += [sp(1), HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")), sp(0.2),
-              Paragraph(f"Rapport genere automatiquement par SOC-Mini YMCA - {datetime.now().strftime('%d/%m/%Y')} - Loki / FortiGate / Entra ID", footer_s)]
+              Paragraph(f"Rapport {REPORT_TYPE} automatique de Sec-Stack - {datetime.now().strftime('%d/%m/%Y')}", footer_s)]
 
-    doc.build(story)
+    doc.build(story, onFirstPage=add_watermark, onLaterPages=add_watermark)
     print(f"PDF generated: {filepath}")
 
 
@@ -390,9 +411,9 @@ def send_email(pdf_path: str, period_label: str) -> None:
     msg = MIMEMultipart()
     msg["From"]    = REPORT_FROM
     msg["To"]      = REPORT_TO
-    msg["Subject"] = f"[SOC-Mini YMCA] Rapport mensuel - {period_label}"
+    msg["Subject"] = f"[SOC-Mini YMCA] Rapport {REPORT_TYPE} - {period_label}"
     msg.attach(MIMEText(
-        f"Bonjour,\n\nVeuillez trouver en piece jointe le rapport mensuel SOC-Mini YMCA "
+        f"Bonjour,\n\nVeuillez trouver en piece jointe le rapport {REPORT_TYPE} SOC-Mini YMCA "
         f"pour la periode : {period_label}.\n\nCordialement,\nSOC-Mini YMCA", "plain"))
 
     with open(pdf_path, "rb") as f:
@@ -418,7 +439,7 @@ def main() -> None:
     now          = datetime.now(timezone.utc)
     last_month   = now - timedelta(days=LOOKBACK_DAYS)
     period_label = f"{last_month.strftime('%d/%m/%Y')} - {now.strftime('%d/%m/%Y')}"
-    filename     = f"soc-report-{now.strftime('%Y-%m')}.pdf"
+    filename     = f"soc-report-{REPORT_TYPE}-{now.strftime('%Y-%m-%d')}.pdf"
     filepath     = os.path.join(REPORT_DIR, filename)
 
     print("=== SOC-Mini Report Generator ===")

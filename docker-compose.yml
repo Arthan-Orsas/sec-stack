@@ -241,7 +241,8 @@ services:
 
     # Ce conteneur ne tourne PAS en permanence.
     # Il s'exécute UNE FOIS puis s'arrête.
-    # Le déclenchement mensuel se fait via une tâche planifiée Synology.
+    # 
+    Le déclenchement mensuel se fait via une tâche planifiée Synology.
     restart: "no"
 
     depends_on:
