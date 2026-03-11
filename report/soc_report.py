@@ -272,7 +272,7 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
     total_auth = data["entraid_success"] + data["entraid_failures"]
     fail_rate  = (data["entraid_failures"] / total_auth * 100) if total_auth > 0 else 0
     lockouts   = data["entraid_error_codes"].get("50053", 0)
-    bruteforce = data["entraid_error_codes"].get("50126", 0)
+    FailLogOn = data["entraid_error_codes"].get("50126", 0)
     total_ai   = sum(data["ai_volume"].values())
     foreign    = sum(data["entraid_foreign"].values())
 
@@ -284,7 +284,7 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
             ["Connexions Entra ID reussies",   str(data["entraid_success"]),  ""],
             ["Connexions Entra ID echouees",   str(data["entraid_failures"]), f"{fail_rate:.1f}% du total"],
             ["Comptes verouilles (50053)",     str(lockouts),    "A verifier" if lockouts > 0 else "OK"],
-            ["Brute-force (50126)",            str(bruteforce),  "Surveiller" if bruteforce > 30 else "Normal"],
+            ["identifiants invalides (50126)",            str(FailLogOn),  "Surveiller" if FailLogOn > 30 else "Normal"],
             ["Connexions depuis l'etranger",   str(foreign),     "A qualifier" if foreign > 0 else "Aucune"],
             ["Volume total vers services IA",  fmt_bytes(total_ai), ""],
             ["Tunnels VPN etablis",            str(data["vpn_success"]),  ""],
