@@ -195,6 +195,52 @@ def collect_data() -> dict:
         '{source="entra_id"} | json country="event.location.countryOrRegion" | country != "FR" | country != ""'
     )
 
+    # Connexions hors horaires (19h-05h heure France)
+    print("  - EntraID connexions hors horaires (19h-05h)...")
+    all_signins = loki_query_logs(
+        '{source="entra_id"} | json',
+        limit=5000
+    )
+    off_hours = []
+    for entry in all_signins:
+        ev = entry.get("event", entry)
+        dt_str = ev.get("createdDateTime", "")
+        if not dt_str:
+            continue
+        try:
+            dt_utc = datetime.strptime(dt_str[:16], "%Y-%m-%dT%H:%M")
+            dt_fr  = dt_utc + timedelta(hours=1)  # UTC+1 hiver France
+            h = dt_fr.hour
+            if h >= 19 or h < 6:
+                # Récupération statut
+                status = ev.get("status", {})
+                if isinstance(status, dict):
+                    error_code = str(status.get("errorCode", ""))
+                else:
+                    error_code = str(status)
+                statut = "Reussie" if error_code == "0" else f"Echec ({error_code})"
+                # Récupération localisation
+                loc = ev.get("location", {})
+                ville = loc.get("city", "")        if isinstance(loc, dict) else ""
+                pays  = loc.get("countryOrRegion", "") if isinstance(loc, dict) else ""
+                off_hours.append({
+                    "dt_fr":       dt_fr.strftime("%d/%m/%Y %H:%M"),
+                    "email":       ev.get("userPrincipalName", ""),   # Log utilisateur
+                    "nom":         ev.get("userDisplayName", ""),     # Utilisateur
+                    "ip":          ev.get("ipAddress", ""),           # IP Source
+                    "methode":     ev.get("appDisplayName", ""),      # Methode de connexion
+                    "application": ev.get("clientAppUsed", ""),       # Application
+                    "statut":      statut,                            # Status de connexion
+                    "ville":       ville,
+                    "pays":        pays,
+                })
+        except Exception as e:
+            print(f"    off_hours parse error: {e}")
+            continue
+    data["entraid_off_hours"] = sorted(off_hours, key=lambda x: x["dt_fr"])
+    print(f"    -> {len(off_hours)} connexions hors horaires trouvees")
+
+
     print("Collection complete.")
     return data
 
@@ -353,6 +399,62 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
             detail_rows,
             widths=[3.5*cm, 5*cm, 3.5*cm, 1.5*cm, 2*cm, 2*cm]
         ))
+
+    story.append(PageBreak())
+
+    # Section 3.2 — Connexions hors horaires
+    story += [Paragraph("3.2 Connexions hors horaires (19h - 05h)", h1_s), hr(), sp(),
+              Paragraph(
+                  "Connexions enregistrees entre 19h00 et 05h59 (heure France). "
+                  "Ces evenements peuvent indiquer un acces non autorise, un compte compromis "
+                  "ou un usage en dehors des heures ouvrables.",
+                  small_s
+              ), sp()]
+
+    off_hours_rows = []
+    for entry in data.get("entraid_off_hours", []):
+        ev     = entry.get("event", {})
+        status = ev.get("status", {})
+        error  = str(status.get("errorCode", ""))
+        result = "Reussie" if error == "0" else f"Echec ({error})"
+        dt_utc = ev.get("createdDateTime", "")[:16].replace("T", " ")
+        # Convertir UTC -> heure France approximative (+1h hiver, +2h ete)
+        try:
+            dt_obj   = datetime.strptime(dt_utc, "%Y-%m-%d %H:%M")
+            dt_local = dt_obj + timedelta(hours=1)
+            dt_fr    = dt_local.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            dt_fr = dt_utc
+        loc = ev.get("location", {})
+        ville = f"{loc.get('city','')}, {loc.get('countryOrRegion','')}" if loc else ""
+        off_hours_rows.append([
+            dt_fr,
+            ev.get("userDisplayName", ev.get("userPrincipalName", "")),
+            ev.get("userPrincipalName", ""),
+            ev.get("appDisplayName", ""),
+            ev.get("clientAppUsed", ""),
+            ev.get("ipAddress", ""),
+            result,
+            ville,
+        ])
+
+    off_hours_rows.sort(key=lambda x: x[0])
+
+    if off_hours_rows:
+        story.append(Paragraph(f"{len(off_hours_rows)} evenement(s) detecte(s).", normal))
+        story.append(sp(0.2))
+        story.append(tbl(
+            ["Date/Heure (FR)", "Nom", "Utilisateur", "Application", "Client", "IP", "Statut", "Localisation"],
+            off_hours_rows,
+            widths=[2.8*cm, 2.5*cm, 3.5*cm, 2.5*cm, 2*cm, 2.5*cm, 2*cm, 2.5*cm]
+        ))
+        story += [sp(), Paragraph(
+            "Les connexions hors horaires reussies meritent d'etre qualifiees. "
+            "Un compte presentant plusieurs echecs nocturnes peut indiquer une tentative de brute force.",
+            small_s
+        )]
+    else:
+        story.append(Paragraph("Aucune connexion hors horaires detectee sur la periode.", normal))
 
     story.append(PageBreak())
 
