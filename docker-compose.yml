@@ -44,6 +44,9 @@ services:
       # Données Loki persistantes (index/chunks).
       - loki-data:/loki
 
+    # Redémarrage automatique (NAS / crash).
+    restart: unless-stopped
+
     ports:
       # Port HTTP Loki (endpoint push / query).
       # Recommandation : exposer uniquement sur le LAN si possible.
@@ -98,6 +101,9 @@ services:
       # Politique TLS pour SMTP.
       - GF_SMTP_STARTTLS_POLICY=MandatoryStartTLS
       - GF_SMTP_SKIP_VERIFY=false
+
+    # Redémarrage automatique (NAS / crash).
+    restart: unless-stopped
 
     depends_on:
       # Démarre Grafana après Loki afin de réduire les erreurs au boot.
@@ -160,6 +166,10 @@ services:
       - "5514:5514/tcp"
       - "5514:5514/udp"
 
+
+    # Redémarrage automatique (NAS / crash).
+    restart: unless-stopped
+    
     depends_on:
       # Promtail doit démarrer après Loki pour envoyer les logs sans erreur.
       - loki
@@ -241,8 +251,7 @@ services:
 
     # Ce conteneur ne tourne PAS en permanence.
     # Il s'exécute UNE FOIS puis s'arrête.
-    # 
-    Le déclenchement mensuel se fait via une tâche planifiée Synology.
+    # Le déclenchement mensuel se fait via une tâche planifiée Synology.
     restart: "no"
 
     depends_on:

@@ -1,0 +1,512 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 4,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Top 10 des services/applications les plus bloqués \npar FortiGate sur les dernières 24h.\nUn service inhabituel en tête de liste mérite investigation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 5,
+      "interval": "5m",
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 30,
+        "minVizHeight": 0,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "manual",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "topk(10,\r\n  sum by (service) (\r\n    count_over_time(\r\n      {job=\"fortigate\"}\r\n      |= \"deny\"\r\n      | logfmt\r\n      | action=\"deny\"\r\n      | service != \"\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 services bloqués (24h)",
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "Value #A"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Logs FortiGate de niveau alert ou error sur les dernières 24h.\nInclut : tentatives VPN échouées, blocages UTM, erreurs système.\nInvestiguer tout pic inhabituel.",
+      "gridPos": {
+        "h": 26,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 4,
+      "interval": "7m",
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": false,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "{job=\"fortigate\"}\r\n|~ \"alert|error\"\r\n| logfmt\r\n| level=~\"alert|error\"\r\n| line_format \"{{.level}} | {{.type}} | {{.subtype}} | {{.msg}} | src={{.srcip}}\"",
+          "maxLines": 200,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Événements critiques FortiGate (24h)",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Surveillance des connexions SSL VPN FortiGate.\n\n🟢 Connexions réussies (ssl-new-con)\n🔴 Échecs login (ssl-login-fail)\n🟠 Erreurs SSL (ssl-alert / ssl-exit-error)\n\nUn volume élevé d'erreurs SSL constant est typiquement \ndu bruit de fond internet (bots/scanners).\nUn pic soudain d'échecs login mérite investigation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": " Échecs login VPN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": " Erreurs SSL VPN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3,
+      "interval": "5m30s",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time(\r\n  {job=\"fortigate\"}\r\n  | logfmt\r\n  | subtype=\"vpn\"\r\n  | action=\"ssl-new-con\"\r\n  [5m]\r\n))",
+          "legendFormat": "Connexions VPN réussies",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time(\r\n  {job=\"fortigate\"}\r\n  | logfmt\r\n  | subtype=\"vpn\"\r\n  | action=\"ssl-login-fail\"\r\n  [5m]\r\n))",
+          "hide": false,
+          "legendFormat": " Échecs login VPN",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time(\r\n  {job=\"fortigate\"}\r\n  | logfmt\r\n  | subtype=\"vpn\"\r\n  | action=~\"ssl-alert|ssl-exit-error\"\r\n  [5m]\r\n))",
+          "hide": false,
+          "legendFormat": " Erreurs SSL VPN",
+          "queryType": "range",
+          "refId": "C"
+        }
+      ],
+      "title": "Activité SSL VPN (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Top des adresses IP externes ayant généré le plus de connexions \nbloquées par FortiGate sur les dernières 24 heures.\n\nUn volume élevé depuis une même IP peut indiquer \nune tentative de scan de ports ou de brute force.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "199.45.155.79"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "199.45.155.79 - Censys.io - Cisco (recherche en cybersécurité)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "64.62.156.84"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "64.62.156.84 -  The Shadowserver Foundation (recherche en cybersécurité)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "64.62.156.179"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "64.62.156.179 - Hurricane Electric (recherche en cybersécurité)"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "id": 1,
+      "interval": "24h",
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 50,
+        "minVizHeight": 0,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "manual",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum by (srcip) (\r\n  count_over_time(\r\n    {job=\"fortigate\"}\r\n    |= \"deny\"\r\n    | logfmt\r\n    | action=\"deny\"\r\n    | srcip != \"\"\r\n    | srcip !~ `192\\.168\\..*`\r\n    | srcip !~ `10\\..*`\r\n    [24h]\r\n  )\r\n)",
+          "legendFormat": "{{srcip}}",
+          "queryType": "range",
+          "refId": "A",
+          "step": "24h"
+        }
+      ],
+      "title": "Connexions externes bloquées — Top IPs (24h)",
+      "transparent": true,
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "description": "Nombre de sessions réseau détectées par FortiGate vers des pays \nconsidérés à risque (Chine, Russie, Iran, Corée) sur les 24 dernières heures.\n\nUn volume élevé depuis un poste peut indiquer une application \nsuspecte, un malware ou une exfiltration de données.\n\nNote : vérifier si le trafic correspond à des applications légitimes \n(Alibaba, TikTok, CapCut) avant d'escalader.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 500,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "dark-yellow",
+                "value": 50
+              },
+              {
+                "color": "dark-orange",
+                "value": 150
+              },
+              {
+                "color": "dark-red",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 2,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 20
+        }
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "sum by (dstcountry, srcip) (\r\n  count_over_time(\r\n    {job=\"fortigate\"}\r\n    |~ \"China|Russia|Iran|Korea\"\r\n    | logfmt\r\n    | dstcountry=~\"China|Russia|Iran|Korea\"\r\n    [24h]\r\n  )\r\n)",
+          "legendFormat": "{{dstcountry}} — {{srcip}}",
+          "queryType": "range",
+          "refId": "A",
+          "step": "24h"
+        }
+      ],
+      "title": "Trafic vers pays à risque (6h)",
+      "transparent": true,
+      "type": "gauge"
+    }
+  ],
+  "refresh": "15m",
+  "schemaVersion": 39,
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SOC-Mini - Fortigate- YMCA",
+  "uid": "dfew9zzwb9c00a",
+  "version": 8,
+  "weekStart": ""
+}

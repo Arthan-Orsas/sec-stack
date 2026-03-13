@@ -32,24 +32,15 @@
           "color": {
             "mode": "palette-classic"
           },
-          "fieldMinMax": false,
-          "mappings": [],
-          "max": 162,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
           },
-          "unit": "none"
+          "fieldMinMax": false,
+          "mappings": []
         },
         "overrides": []
       },
@@ -61,25 +52,29 @@
       },
       "id": 1,
       "options": {
-        "displayMode": "gradient",
-        "maxVizHeight": 90,
-        "minVizHeight": 20,
-        "minVizWidth": 8,
-        "namePlacement": "top",
-        "orientation": "horizontal",
+        "displayLabels": [
+          "value"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value"
+          ]
+        },
+        "pieType": "pie",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
           "fields": "",
-          "values": false
+          "values": true
         },
-        "showUnfilled": true,
-        "sizing": "manual",
-        "text": {
-          "titleSize": 40
-        },
-        "valueMode": "text"
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "pluginVersion": "11.1.0",
       "targets": [
@@ -89,15 +84,27 @@
             "uid": "afbfye2vno1dsd"
           },
           "editorMode": "code",
-          "expr": "count by (app) (sum by (srcip, app) (count_over_time({job=\"fortigate\"} |= \"GenAI\" | logfmt | srcip != \"\" | app != \"\" [24h])))",
+          "expr": "count by (app) (\r\n  sum by (srcip, app) (\r\n    count_over_time(\r\n      {job=\"fortigate\"}\r\n      |= \"GenAI\"\r\n      | logfmt\r\n      | srcip != \"\"\r\n      | app != \"\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
           "legendFormat": "{{app=\"\"}}",
           "queryType": "range",
-          "refId": "A"
+          "refId": "A",
+          "step": "24h"
         }
       ],
       "title": "Nombre de postes utilisant les outils IA (24h)",
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "labelsToFields": false,
+            "reducers": [
+              "max"
+            ]
+          }
+        }
+      ],
       "transparent": true,
-      "type": "bargauge"
+      "type": "piechart"
     },
     {
       "datasource": {
@@ -236,6 +243,7 @@
       "type": "gauge"
     }
   ],
+  "refresh": "1h",
   "schemaVersion": 39,
   "tags": [],
   "templating": {
@@ -249,6 +257,6 @@
   "timezone": "browser",
   "title": "SOC-Mini - AI Use - YMCA",
   "uid": "ffewup8b34npce",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

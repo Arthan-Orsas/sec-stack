@@ -93,13 +93,27 @@
             "uid": "afbfye2vno1dsd"
           },
           "editorMode": "code",
-          "expr": "topk(\r\n  10,\r\n  sum by (app) (\r\n    count_over_time(\r\n      {source=\"entra_id\", filename=~\"/logs/entra_signins_.*\\\\.jsonl\"}\r\n      | json errorCode=\"event.status.errorCode\", app=\"event.appDisplayName\"\r\n      | errorCode != \"0\"\r\n      | app != \"\"\r\n      | line_format \"{{.app}}\"\r\n      | regexp \"(?P<app>.+)\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
+          "expr": "topk(10,\r\n  sum by (app) (\r\n    count_over_time(\r\n      {source=\"entra_id\", filename=~\"/logs/entra_signins_.*\\\\.jsonl\"}\r\n      | json errorCode=\"event.status.errorCode\", app=\"event.appDisplayName\"\r\n      | errorCode != \"0\"\r\n      | app != \"\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
           "legendFormat": "{{app}}",
           "queryType": "instant",
           "refId": "A"
         }
       ],
       "title": "Échecs d'authentification par application (24h)",
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "Value #A"
+              }
+            ]
+          }
+        }
+      ],
       "transparent": true,
       "type": "bargauge"
     },
@@ -729,6 +743,18 @@
       "title": "EntraID - Top 10 code erreur (24h)",
       "transformations": [
         {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "Value #A"
+              }
+            ]
+          }
+        },
+        {
           "id": "rowsToFields",
           "options": {
             "mappings": [
@@ -893,7 +919,7 @@
             "uid": "afbfye2vno1dsd"
           },
           "editorMode": "code",
-          "expr": "sum(\r\n  count_over_time(\r\n    {source=\"entra_id\", filename=~\"/logs/entra_signins_.*\\\\.jsonl\"}\r\n    | json\r\n    | event_status_errorCode != \"0\"\r\n    [5m]\r\n  )\r\n)or vector(0)",
+          "expr": "sum(\r\n  count_over_time(\r\n    {source=\"entra_id\", filename=~\"/logs/entra_signins_.*\\\\.jsonl\"}\r\n    | json errorCode=\"event.status.errorCode\"\r\n    | errorCode != \"0\"\r\n    [5m]\r\n  )\r\n)\r\nor vector(0)",
           "queryType": "range",
           "refId": "A",
           "step": ""
@@ -1012,6 +1038,20 @@
         }
       ],
       "title": "EntraID — Top 10 utilisateurs (échecs d’authentification) — 24h",
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "Value #A"
+              }
+            ]
+          }
+        }
+      ],
       "transparent": true,
       "type": "barchart"
     },
@@ -1243,9 +1283,359 @@
       ],
       "title": "Timeline connexions réussies vs échouées (24h)",
       "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "afbfye2vno1dsd"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "center",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false,
+            "minWidth": 50
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errorCode"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "dark-green",
+                        "index": 0,
+                        "text": "Connexion réussie"
+                      }
+                    },
+                    "type": "value"
+                  },
+                  {
+                    "options": {
+                      "from": 1,
+                      "result": {
+                        "color": "dark-red",
+                        "index": 1,
+                        "text": "Echec de connexion"
+                      },
+                      "to": 999999
+                    },
+                    "type": "range"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Statut"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 169
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ville"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 108
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Log utilisateur"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 404
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "IP Source"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 291
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Methode de connexion"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 252
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Application"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 279
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 177
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "createdDateTime"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "md",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.1.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "afbfye2vno1dsd"
+          },
+          "editorMode": "code",
+          "expr": "{source=\"entra_id\"}\r\n| json\r\n| event_createdDateTime =~ `.*T(18|19|20|21|22|23|0[0-4]).*`",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Panel Title",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "source": "Line"
+          }
+        },
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "source": "event"
+          }
+        },
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "source": "status"
+          }
+        },
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "location"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "Time": true,
+              "additionalDetails": true,
+              "appId": true,
+              "appliedConditionalAccessPolicies": true,
+              "conditionalAccessStatus": true,
+              "correlationId": true,
+              "deviceDetail": true,
+              "errorCode": false,
+              "event": true,
+              "failureReason": true,
+              "geoCoordinates": true,
+              "id": true,
+              "id 2": true,
+              "ingested_at": true,
+              "isInteractive": true,
+              "labelTypes": true,
+              "labels": true,
+              "labels 2": true,
+              "location": true,
+              "resourceDisplayName": true,
+              "resourceId": true,
+              "riskDetail": true,
+              "riskEventTypes": true,
+              "riskEventTypes_v2": true,
+              "riskLevelAggregated": true,
+              "riskLevelDuringSignIn": true,
+              "riskState": true,
+              "state": true,
+              "status": true,
+              "tsNs": true,
+              "userId": true
+            },
+            "includeByName": {},
+            "indexByName": {
+              "Line": 11,
+              "Time": 10,
+              "additionalDetails": 37,
+              "appDisplayName": 4,
+              "appId": 20,
+              "appliedConditionalAccessPolicies": 35,
+              "city": 7,
+              "clientAppUsed": 5,
+              "conditionalAccessStatus": 22,
+              "correlationId": 21,
+              "countryOrRegion": 8,
+              "createdDateTime": 0,
+              "deviceDetail": 33,
+              "errorCode": 6,
+              "event": 16,
+              "failureReason": 36,
+              "geoCoordinates": 39,
+              "id": 14,
+              "id 2": 18,
+              "ingested_at": 17,
+              "ipAddress": 3,
+              "isInteractive": 23,
+              "labelTypes": 13,
+              "labels": 9,
+              "labels 2": 15,
+              "location": 34,
+              "resourceDisplayName": 30,
+              "resourceId": 31,
+              "riskDetail": 24,
+              "riskEventTypes": 28,
+              "riskEventTypes_v2": 29,
+              "riskLevelAggregated": 25,
+              "riskLevelDuringSignIn": 26,
+              "riskState": 27,
+              "state": 38,
+              "status": 32,
+              "tsNs": 12,
+              "userDisplayName": 2,
+              "userId": 19,
+              "userPrincipalName": 1
+            },
+            "renameByName": {
+              "appDisplayName": "Methode de connexion",
+              "city": "Ville",
+              "clientAppUsed": "Application",
+              "countryOrRegion": "Pays",
+              "createdDateTime": "time",
+              "errorCode": "Statut",
+              "ipAddress": "IP Source",
+              "userDisplayName": "Utilisateur",
+              "userPrincipalName": "Log utilisateur"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "desc": true,
+                "field": "createdDateTime"
+              }
+            ]
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "dateFormat": "",
+                "destinationType": "time",
+                "targetField": "time"
+              }
+            ],
+            "fields": {}
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
-  "refresh": "",
+  "refresh": "15m",
   "schemaVersion": 39,
   "tags": [],
   "templating": {
@@ -1259,6 +1649,6 @@
   "timezone": "browser",
   "title": "SOC-Mini - EntraId - YMCA",
   "uid": "bfd0n4n0selfkd",
-  "version": 22,
+  "version": 27,
   "weekStart": "monday"
 }

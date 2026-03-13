@@ -196,14 +196,20 @@ def collect_data() -> dict:
     )
 
     # Connexions hors horaires (19h-05h heure France)
+    # PAS de | json dans la query → Loki retourne les lignes brutes JSON
+    # On parse en Python pour avoir accès aux champs imbriqués
     print("  - EntraID connexions hors horaires (19h-05h)...")
     all_signins = loki_query_logs(
-        '{source="entra_id"} | json',
+        '{source="entra_id"}',
         limit=5000
     )
     off_hours = []
     for entry in all_signins:
-        ev = entry.get("event", entry)
+        # entry = json.loads(ligne_brute)
+        # Structure : {"labels":{...}, "event":{...}, "ingested_at":"..."}
+        ev = entry.get("event", {})
+        if not ev:
+            continue
         dt_str = ev.get("createdDateTime", "")
         if not dt_str:
             continue
@@ -212,25 +218,20 @@ def collect_data() -> dict:
             dt_fr  = dt_utc + timedelta(hours=1)  # UTC+1 hiver France
             h = dt_fr.hour
             if h >= 19 or h < 6:
-                # Récupération statut
-                status = ev.get("status", {})
-                if isinstance(status, dict):
-                    error_code = str(status.get("errorCode", ""))
-                else:
-                    error_code = str(status)
-                statut = "Reussie" if error_code == "0" else f"Echec ({error_code})"
-                # Récupération localisation
-                loc = ev.get("location", {})
-                ville = loc.get("city", "")        if isinstance(loc, dict) else ""
-                pays  = loc.get("countryOrRegion", "") if isinstance(loc, dict) else ""
+                status     = ev.get("status", {})
+                error_code = str(status.get("errorCode", "")) if isinstance(status, dict) else ""
+                statut     = "Reussie" if error_code == "0" else f"Echec ({error_code})"
+                loc        = ev.get("location", {})
+                ville      = loc.get("city", "")             if isinstance(loc, dict) else ""
+                pays       = loc.get("countryOrRegion", "")  if isinstance(loc, dict) else ""
                 off_hours.append({
                     "dt_fr":       dt_fr.strftime("%d/%m/%Y %H:%M"),
-                    "email":       ev.get("userPrincipalName", ""),   # Log utilisateur
-                    "nom":         ev.get("userDisplayName", ""),     # Utilisateur
-                    "ip":          ev.get("ipAddress", ""),           # IP Source
-                    "methode":     ev.get("appDisplayName", ""),      # Methode de connexion
-                    "application": ev.get("clientAppUsed", ""),       # Application
-                    "statut":      statut,                            # Status de connexion
+                    "email":       ev.get("userPrincipalName", ""),
+                    "nom":         ev.get("userDisplayName",   ""),
+                    "ip":          ev.get("ipAddress",         ""),
+                    "methode":     ev.get("appDisplayName",    ""),
+                    "application": ev.get("clientAppUsed",     ""),
+                    "statut":      statut,
                     "ville":       ville,
                     "pays":        pays,
                 })
