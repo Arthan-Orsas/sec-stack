@@ -84,9 +84,9 @@
             "uid": "afbfye2vno1dsd"
           },
           "editorMode": "code",
-          "expr": "count by (app) (\r\n  sum by (srcip, app) (\r\n    count_over_time(\r\n      {job=\"fortigate\"}\r\n      |= \"GenAI\"\r\n      | logfmt\r\n      | srcip != \"\"\r\n      | app != \"\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
+          "expr": "count by (app) (\r\n  sum by (srcip, app) (\r\n    count_over_time(\r\n      {job=\"fortigate\"} |= \"GenAI\" | logfmt | srcip != \"\" | app != \"\"\r\n      [24h]\r\n    )\r\n  )\r\n)",
           "legendFormat": "{{app=\"\"}}",
-          "queryType": "range",
+          "queryType": "instant",
           "refId": "A",
           "step": "24h"
         }
@@ -94,6 +94,7 @@
       "title": "Nombre de postes utilisant les outils IA (24h)",
       "transformations": [
         {
+          "disabled": true,
           "id": "reduce",
           "options": {
             "labelsToFields": false,
