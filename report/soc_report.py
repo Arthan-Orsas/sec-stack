@@ -307,12 +307,12 @@ def build_pdf(data: dict, filepath: str, period_label: str) -> None:
         logo = Image(logo_path, width=14*cm, height=9*cm)
         logo.hAlign = "CENTER"
         logo_els = [logo, sp(0.5)]
-    story += [sp(1)] + logo_els + [sp(1), Paragraph("Sec-Stack YMCA", title_s),
-              sp(0.5), Paragraph(f"Rapport de securite {REPORT_TYPE.capitalize()}", sub_s),
+    story += [sp(1)] + logo_els + [sp(1), Paragraph("Rapport de Cybersecurité", title_s),
+              sp(0.5), Paragraph(f"Rapport {REPORT_TYPE.capitalize()}", sub_s),
               Paragraph(f"Periode : {period_label}", sub_s),
               Paragraph(f"Genere le : {datetime.now().strftime('%d/%m/%Y a %H:%M')}", sub_s),
               sp(1), HRFlowable(width="100%", thickness=2, color=colors.HexColor("#002E10")), sp(0.5),
-              Paragraph(f"Rapport {REPORT_TYPE} automatique de Sec-Stack", small_s),
+              Paragraph(f"Rapport {REPORT_TYPE} automatique de Cybersecurité", small_s),
               PageBreak()]
 
     # Calculs résumé
